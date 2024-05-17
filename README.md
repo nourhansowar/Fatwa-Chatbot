@@ -1,1 +1,1 @@
-# Fatwa-Chatbot
+# Fatwa-Chatbot Retrieval QA & Summarization bot
