@@ -1,11 +1,10 @@
-from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
-import faiss
+import numpy as np
 from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM
 import logging
 import time
 import torch
-import numpy as np
+import faiss
 import pickle
 
 string_to_remove = "الحمد لله والصلاة والسلام على رسول الله وعلى آله وصحبه أما بعد:"
@@ -32,9 +31,9 @@ class FAISSEmbedding:
         self.titles = []
         self.questions = []
         self.answers = []
-        self.data= None
+        self.data = None
 
-    def load_csv_data(self, file_path):
+    def load_csv_data(self, file_path, rows = 200):
         logging.info(f"Loading data from {file_path}")
         self.data = pd.read_csv(file_path, encoding='utf-8')
         if 'ques' not in self.data.columns or 'ans' not in self.data.columns:
@@ -48,10 +47,10 @@ class FAISSEmbedding:
             self.data['title'] = self.data['title'].astype(str)
         
         # select first 1k rows
-        self.data = self.data[:200]
+        self.data = self.data[:rows]
         self.data = FAISSEmbedding.clean_data(self.data)
        
-        # clean data 
+        # Clean data 
         self.data['ans'] = self.data['ans'].apply(FAISSEmbedding.remove_text)
         
         self.questions = self.data['ques'].tolist()
@@ -70,13 +69,11 @@ class FAISSEmbedding:
         return data
     
     @staticmethod
-    def remove_text(text:str):
+    def remove_text(text: str):
         if text.startswith(string_to_remove):
             return text[len(string_to_remove):].strip()
         return text
 
-    
-    
     def get_embeddings_in_batches(self,texts, batch_size=32, type:str = 'titles'):
         logging.info(f"Creating embeddings for the {len(texts)} {type} in batches of {batch_size}")
         
@@ -89,17 +86,22 @@ class FAISSEmbedding:
             hidden_states = outputs.hidden_states[-1]  # Get the last layer's hidden state
             batch_embeddings = hidden_states.mean(dim=1).cpu().numpy()
             embeddings_list.append(batch_embeddings)
-        print(embeddings_list)
         return np.vstack(embeddings_list)
     
-    def create_embeddings(self, batch_size=8):
-        title_embeddings = self.get_embeddings_in_batches(self.titles, batch_size, type= 'titles')
-        ques_embeddings = self.get_embeddings_in_batches(self.questions, batch_size,type= 'questions')
-        ans_embeddings = self.get_embeddings_in_batches(self.answers, batch_size,type= 'answers')
+    def create_embeddings(self, batch_size=32):
+        logging.info("Creating embeddings for the dataset")
+        title_embeddings = self.get_embeddings_in_batches(self.titles, batch_size, 'titles')
+        ques_embeddings = self.get_embeddings_in_batches(self.questions, batch_size, 'questions')
+        ans_embeddings = self.get_embeddings_in_batches(self.answers, batch_size, 'answers')
         
         # Combine embeddings into a single array
         self.embeddings = np.hstack((title_embeddings, ques_embeddings, ans_embeddings))
         logging.info(f"Embeddings created, shape: {self.embeddings.shape}")
+
+        # Debug: Print some example embeddings
+        logging.info(f"Example title embedding: {title_embeddings[0]}")
+        logging.info(f"Example question embedding: {ques_embeddings[0]}")
+        logging.info(f"Example answer embedding: {ans_embeddings[0]}")
 
     def build_index(self):
         logging.info("Building FAISS index")
@@ -107,6 +109,10 @@ class FAISSEmbedding:
         self.index = faiss.IndexFlatL2(dimension)
         self.index.add(self.embeddings)
         logging.info("FAISS index built")
+
+        # Debug: Print index information
+        logging.info(f"Index total vectors: {self.index.ntotal}")
+        logging.info(f"Index dimension: {dimension}")
 
     def save_index(self, file_path, metadata_path):
         logging.info(f"Saving FAISS index to {file_path}")
@@ -138,6 +144,10 @@ class FAISSEmbedding:
         # Ensure the query vector matches the combined embedding dimensions
         query_vector = np.hstack((query_embedding, query_embedding, query_embedding)).reshape(1, -1)
         
+        # Debug: Print the query embedding
+        logging.info(f"Query embedding: {query_embedding}")
+        logging.info(f"Query vector shape: {query_vector.shape}")
+        
         # Search the index
         distances, indices = self.index.search(query_vector, top_k)
         
@@ -150,7 +160,7 @@ class FAISSEmbedding:
                     "title": self.titles[i] if self.titles else "",
                     "question": self.questions[i],
                     "answer": self.answers[i],
-                    # "distance": distances[i]
+                    # "distance": distances[0][i]
                 }
                 most_similar_entries.append(entry)
             else:
