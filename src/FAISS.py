@@ -1,3 +1,4 @@
+from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
 import faiss
 from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM
@@ -6,6 +7,8 @@ import time
 import torch
 import numpy as np
 import pickle
+
+string_to_remove = "الحمد لله والصلاة والسلام على رسول الله وعلى آله وصحبه أما بعد:"
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -26,82 +29,135 @@ class FAISSEmbedding:
         
         self.index = None
         self.embeddings = None
+        self.titles = []
         self.questions = []
         self.answers = []
+        self.data= None
 
     def load_csv_data(self, file_path):
         logging.info(f"Loading data from {file_path}")
-        data = pd.read_csv(file_path, encoding='utf-8')
-        if 'ques' not in data.columns or 'ans' not in data.columns:
+        self.data = pd.read_csv(file_path, encoding='utf-8')
+        if 'ques' not in self.data.columns or 'ans' not in self.data.columns:
             logging.error("CSV file must contain 'ques' and 'ans' columns")
             raise ValueError("CSV file must contain 'ques' and 'ans' columns")
         
-        # select first 20000 rows
-        data = data[:1000]
+        # Convert non-string columns to strings
+        self.data['ques'] = self.data['ques'].astype(str)
+        self.data['ans'] = self.data['ans'].astype(str)
+        if 'title' in self.data.columns:
+            self.data['title'] = self.data['title'].astype(str)
         
-        self.questions = data['ques'].tolist()
-        self.answers = data['ans'].tolist()
-        logging.info(f"Data loaded successfully, shape: {data.shape}")
+        # select first 1k rows
+        self.data = self.data[:200]
+        self.data = FAISSEmbedding.clean_data(self.data)
+       
+        # clean data 
+        self.data['ans'] = self.data['ans'].apply(FAISSEmbedding.remove_text)
         
-    def create_embeddings(self, batch_size=32):
-        logging.info("Creating embeddings for the questions")
+        self.questions = self.data['ques'].tolist()
+        self.answers = self.data['ans'].tolist()
+        if 'title' in self.data.columns:
+            self.titles = self.data['title'].tolist()
+        logging.info(f"Data loaded successfully, shape: {self.data.shape}")
+        print(self.data.head())
+    
+    @staticmethod
+    def clean_data(data: pd.DataFrame):
+        # Remove any rows with missing values
+        data = data.dropna()
+        # Remove any duplicate rows
+        data = data.drop_duplicates()
+        return data
+    
+    @staticmethod
+    def remove_text(text:str):
+        if text.startswith(string_to_remove):
+            return text[len(string_to_remove):].strip()
+        return text
+
+    
+    
+    def get_embeddings_in_batches(self,texts, batch_size=32, type:str = 'titles'):
+        logging.info(f"Creating embeddings for the {len(texts)} {type} in batches of {batch_size}")
         
         embeddings_list = []
-        for i in range(0, len(self.questions), batch_size):
-            batch = self.questions[i:i + batch_size]
-            batch = [str(q) for q in batch]  # Ensure all elements are strings
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
             inputs = self.tokenizer(batch, return_tensors='pt', padding=True, truncation=True, max_length=512)
             with torch.no_grad():
                 outputs = self.model(**inputs, output_hidden_states=True)
-            # Extract the hidden states from the output
             hidden_states = outputs.hidden_states[-1]  # Get the last layer's hidden state
             batch_embeddings = hidden_states.mean(dim=1).cpu().numpy()
             embeddings_list.append(batch_embeddings)
+        print(embeddings_list)
+        return np.vstack(embeddings_list)
+    
+    def create_embeddings(self, batch_size=8):
+        title_embeddings = self.get_embeddings_in_batches(self.titles, batch_size, type= 'titles')
+        ques_embeddings = self.get_embeddings_in_batches(self.questions, batch_size,type= 'questions')
+        ans_embeddings = self.get_embeddings_in_batches(self.answers, batch_size,type= 'answers')
         
-        self.embeddings = np.vstack(embeddings_list)
-        logging.info("Embeddings created successfully")
-        
-    def build_index(self, n_list=100):
+        # Combine embeddings into a single array
+        self.embeddings = np.hstack((title_embeddings, ques_embeddings, ans_embeddings))
+        logging.info(f"Embeddings created, shape: {self.embeddings.shape}")
+
+    def build_index(self):
         logging.info("Building FAISS index")
         dimension = self.embeddings.shape[1]
-        quantizer = faiss.IndexFlatL2(dimension)
-        self.index = faiss.IndexIVFFlat(quantizer, dimension, n_list)
-        self.index.train(self.embeddings)
+        self.index = faiss.IndexFlatL2(dimension)
         self.index.add(self.embeddings)
-        logging.info("FAISS index built successfully")
+        logging.info("FAISS index built")
 
-    def save_index(self, index_file_path, metadata_file_path):
-        logging.info(f"Saving index to {index_file_path}")
-        faiss.write_index(self.index, index_file_path)
-        logging.info("Index saved successfully")
+    def save_index(self, file_path, metadata_path):
+        logging.info(f"Saving FAISS index to {file_path}")
+        faiss.write_index(self.index, file_path)
+        with open(metadata_path, 'wb') as f:
+            pickle.dump({'titles': self.titles, 'questions': self.questions, 'answers': self.answers}, f)
+        logging.info("FAISS index and metadata saved")
 
-        # Save questions and answers
-        with open(metadata_file_path, 'wb') as f:
-            pickle.dump({'questions': self.questions, 'answers': self.answers}, f)
-        logging.info("Metadata saved successfully")
-
-    def load_index(self, index_file_path, metadata_file_path):
-        logging.info(f"Loading index from {index_file_path}")
-        self.index = faiss.read_index(index_file_path)
-        logging.info("Index loaded successfully")
-
-        # Load questions and answers
-        with open(metadata_file_path, 'rb') as f:
+    def load_index(self, file_path, metadata_path):
+        logging.info(f"Loading FAISS index from {file_path}")
+        self.index = faiss.read_index(file_path)
+        with open(metadata_path, 'rb') as f:
             metadata = pickle.load(f)
+            self.titles = metadata['titles']
             self.questions = metadata['questions']
             self.answers = metadata['answers']
-        logging.info("Metadata loaded successfully")
+        logging.info("FAISS index and metadata loaded")
 
     def search(self, query, top_k=5):
         logging.info(f"Searching for top {top_k} similar questions for the query: '{query}'")
-        inputs = self.tokenizer([query], return_tensors='pt', padding=True, truncation=True, max_length=512)
-        with torch.no_grad():
-            outputs = self.model(**inputs)
         
+        # Generate the embedding for the query
+        inputs = self.tokenizer(query, return_tensors='pt', padding=True, truncation=True, max_length=512)
+        with torch.no_grad():
+            outputs = self.model(**inputs, output_hidden_states=True)
         hidden_states = outputs.hidden_states[-1]  # Get the last layer's hidden state
-        query_vector = hidden_states.mean(dim=1).cpu().numpy()
+        query_embedding = hidden_states.mean(dim=1).cpu().numpy()
+        
+        # Ensure the query vector matches the combined embedding dimensions
+        query_vector = np.hstack((query_embedding, query_embedding, query_embedding)).reshape(1, -1)
+        
+        # Search the index
         distances, indices = self.index.search(query_vector, top_k)
-        results = [(self.questions[idx], self.answers[idx], distance)
-                   for idx, distance in zip(indices[0], distances[0])]
+        
+        most_similar_entries = []
+        num_entries = len(self.questions)  # Number of entries in the dataset
+        
+        for i in indices[0]:
+            if i < num_entries:  # Check if index is within valid range
+                entry = {
+                    "title": self.titles[i] if self.titles else "",
+                    "question": self.questions[i],
+                    "answer": self.answers[i],
+                    # "distance": distances[i]
+                }
+                most_similar_entries.append(entry)
+            else:
+                logging.warning(f"Index {i} is out of bounds for the dataset with size {num_entries}")
+        
         logging.info(f"Search completed for query: '{query}'")
-        return results
+        logging.info(f"Results: {most_similar_entries}")
+        logging.info(f"Distances: {distances}")
+        
+        return most_similar_entries
