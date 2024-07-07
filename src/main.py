@@ -1,7 +1,5 @@
 # from FAISS import *
-# from tokens import TOKEN_API
-# # TOKEN_API = "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"
-
+# from tokens import HF_API
 # csv_file_path = '1kData.csv'
 
 # if __name__ == "__main__":
