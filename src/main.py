@@ -5,9 +5,7 @@ csv_file_path = '../data/faq_data.csv'
 if __name__ == "__main__":
     
     # Use the model from the CohereForAI collection
-    # model_name = "CohereForAI/aya-23-35B"
     model_name = "aubmindlab/aragpt2-large"
-    # model_name = 'core42/jais-13b'
     faiss_embedding = FAISSEmbedding(model_name, TOKEN_API)
 
     # Load data from a CSV file
@@ -27,5 +25,5 @@ if __name__ == "__main__":
 
     # Save the index to a file
     start_time = time.time()
-    faiss_embedding.save_index('../data/faiss_index_file.index', '../data/metadata.pkl')
+    faiss_embedding.save_index('./faiss_index_file.index', './metadata.pkl')
     logging.info(f"Saving the index took {time.time() - start_time:.2f} seconds")
