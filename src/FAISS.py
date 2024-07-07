@@ -40,7 +40,7 @@ class FAISSEmbedding:
         self.MAX_LENGTH = 256
         self.batch_size = 8
 
-    def load_csv_data(self, file_path):
+    def load_csv_data(self, file_path, rows=1000):
         logging.info(f"Loading data from {file_path}")
         self.data = pd.read_csv(file_path, encoding='utf-8')
         if 'ques' not in self.data.columns or 'ans' not in self.data.columns:
@@ -54,7 +54,7 @@ class FAISSEmbedding:
             self.data['title'] = self.data['title'].astype(str)
 
         # Select first 1k rows
-        self.data = self.data[:1000]
+        self.data = self.data[:rows]
         self.data = FAISSEmbedding.clean_data(self.data)
 
         # Clean data
@@ -96,7 +96,7 @@ class FAISSEmbedding:
                     continue
 
                 inputs = self.tokenizer(valid_texts, return_tensors='pt', padding=True, truncation=True, max_length=self.MAX_LENGTH).to(self.device)
-                with torch.no_deep_learning_models(self.device):
+                with torch.no_grad():
                     outputs = self.model(**inputs, output_hidden_states=True)
 
                 hidden_states = outputs.hidden_states[-1]  # Get the last layer's hidden state
@@ -114,13 +114,13 @@ class FAISSEmbedding:
 
         return embeddings_ls
 
-    def create_embeddings(self, batch_size=4):
+    def create_embeddings(self, batch_size=8):
         title_embeddings = self.get_embeddings_in_batches(self.titles, batch_size, type='titles')
         ques_embeddings = self.get_embeddings_in_batches(self.questions, batch_size, type='questions')
-        ans_embeddings = self.get_embeddings_in_batches(self.answers, batch_size, type='answers')
+        # ans_embeddings = self.get_embeddings_in_batches(self.answers, batch_size, type='answers')
 
         # Combine embeddings into a single array
-        self.embeddings = np.hstack((title_embeddings, ques_embeddings, ans_embeddings))
+        self.embeddings = np.hstack((title_embeddings, ques_embeddings))
         logging.info(f"Embeddings created, shape: {self.embeddings.shape}")
         return self.embeddings
 
