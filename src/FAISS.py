@@ -10,7 +10,7 @@ import time
 import torch
 import numpy as np
 from tqdm import tqdm
-from tokens import HF_API, MODEL_NAME
+from tokens import *
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -154,6 +154,11 @@ class FAISSEmbedding:
         return self.index
 
     def search(self, query, top_k=5):
+        
+        logging.info("Loading index and metadata..")
+        # loading index and metadata
+        self.index = self.load_index(INDEX_PATH, METADATA_PATH)
+        
         logging.info(f"Searching for top {top_k} similar questions for the query: '{query}'")
 
         # Generate the embedding for the query

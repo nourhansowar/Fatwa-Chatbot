@@ -1,7 +1,7 @@
 from FAISS import *
 import openai
 import streamlit as st
-from tokens import OPENAI_API, MODEL_NAME, INDEX_PATH, METADATA_PATH
+from tokens import *
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -88,7 +88,7 @@ def main():
 
             # Append extra context to the system message
             system_msg += "\nUse the following extra context :\n{context}" 
-            context = Faiss_wrapper.search(query=user_input)
+            context = Faiss_wrapper.search(query=user_input, top_k=1)
             ################################
             ## SUMARIZATION PART HERE (CONTEXT: LIST OF most_similar_entries)
 
