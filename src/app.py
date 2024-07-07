@@ -1,16 +1,17 @@
-from faiss import *
+from FAISS import *
 import openai
 import streamlit as st
-from tokens import TOKEN_API
+from tokens import OPENAI_API, MODEL_NAME, INDEX_PATH, METADATA_PATH
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # Set the OpenAI API token and model name
-model_name = "aubmindlab/aragpt2-large"
-client = openai.OpenAI(api_key=TOKEN_API)
+client = openai.OpenAI(api_key=OPENAI_API)
 
 # Cache the FAISS model to avoid reloading it multiple times
 @st.cache_resource()
 def load_model():
-    return FAISSEmbedding(model_name, TOKEN_API)
+    return FAISSEmbedding()
 
 # Load the FAISS model
 Faiss_wrapper = load_model()
@@ -54,6 +55,8 @@ def main():
     st.title("💬 Chat with AI - RAG Model and Vector DB")
 
     # Sidebar controls
+    model_name = st.sidebar.selectbox("Choose the Model", ["text-embedding-3-large", "gpt-3.5-turbo", "text-embedding-ada-002"], index=1)
+
     temperature = st.sidebar.slider("Set Temperature", min_value=0.0, max_value=1.0, value=0.7, step=0.1)
     max_history_length = int(st.sidebar.number_input("Max History Length", min_value=1, max_value=10, value=3))
     system_msg = st.sidebar.text_area("System Message (Persona)", value="", height=100)
@@ -61,11 +64,6 @@ def main():
     # Initialize the vector database in the session state if not already present
     if 'vec_db' not in st.session_state:
         st.session_state.vec_db = None
-
-    # Load the FAISS index and metadata
-    with st.spinner("Reading file..."):
-        st.session_state.vec_db = Faiss_wrapper.load_index(r"data\faiss_index_file.index", r"data\metadata.pkl")
-        st.sidebar.text("PDF processed and vector database created.")
 
     # Clear chat button in the sidebar
     if st.sidebar.button("Clear Chat"):
@@ -91,6 +89,12 @@ def main():
             # Append extra context to the system message
             system_msg += "\nUse the following extra context :\n{context}" 
             context = Faiss_wrapper.search(query=user_input)
+            ################################
+            ## SUMARIZATION PART HERE (CONTEXT: LIST OF most_similar_entries)
+
+
+            ################################
+
             if context != None:                           
                 system_msg = system_msg.format(context=context)
                 st.session_state.last_context = context
