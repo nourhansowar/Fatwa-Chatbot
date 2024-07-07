@@ -10,34 +10,34 @@ import time
 import torch
 import numpy as np
 from tqdm import tqdm
-
-string_to_remove = "الحمد لله والصلاة والسلام على رسول الله وعلى آله وصحبه أما بعد:"
-
+from tokens import HF_API, MODEL_NAME
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class FAISSEmbedding:
-    def __init__(self, model_name, token):
-        logging.info("Initializing FAISS embedding class")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, token=token, trust_remote_code=True)
+    def __init__(self):
+        print("Initializing FAISS embedding class")
+        print("Initializing tokenizer ")
+        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, token=HF_API, trust_remote_code=True)
+    
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Check if the tokenizer has a padding token, if not add one
         if self.tokenizer.pad_token is None:
             self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, token=token, trust_remote_code=True).to(self.device)
+        print("Initializing Model ")
+        self.model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, token=HF_API, trust_remote_code=True).to(self.device)
 
         # Resize model embeddings if new tokens were added
         self.model.resize_token_embeddings(len(self.tokenizer))
-
         self.index = None
         self.embeddings = None
         self.titles = []
         self.questions = []
         self.answers = []
         self.data = None
-        self.MAX_LENGTH=256
+        self.MAX_LENGTH = 256
         self.batch_size = 8
 
     def load_csv_data(self, file_path):
@@ -77,7 +77,7 @@ class FAISSEmbedding:
 
     @staticmethod
     def remove_text(text: str):
-        string_to_remove = "[some_text_to_remove]"
+        string_to_remove = "الحمد لله والصلاة والسلام على رسول الله وعلى آله وصحبه أما بعد:"
         if text.startswith(string_to_remove):
             return text[len(string_to_remove):].strip()
         return text
@@ -96,12 +96,11 @@ class FAISSEmbedding:
                     continue
 
                 inputs = self.tokenizer(valid_texts, return_tensors='pt', padding=True, truncation=True, max_length=self.MAX_LENGTH).to(self.device)
-                with torch.no_grad():
+                with torch.no_deep_learning_models(self.device):
                     outputs = self.model(**inputs, output_hidden_states=True)
 
                 hidden_states = outputs.hidden_states[-1]  # Get the last layer's hidden state
                 batch_embeddings = hidden_states.mean(dim=1).cpu().numpy()
-                # embeddings = outputs.hidden_states[-1].cpu().numpy()
                 embeddings_ls.append(batch_embeddings)
                 pbar.update(len(batch_texts))
 
@@ -111,7 +110,7 @@ class FAISSEmbedding:
 
         # Concatenate all batch embeddings into a single numpy array
         embeddings_ls = np.concatenate(embeddings_ls, axis=0)
-        logging.info("embeddings_ls length", len(embeddings_ls))
+        logging.info(f"embeddings_ls length: {len(embeddings_ls)}")
 
         return embeddings_ls
 
@@ -169,7 +168,7 @@ class FAISSEmbedding:
 
         # Search the index
         distances, indices = self.index.search(query_vector, top_k)
-        logging.info(distances.shape,type(distances))
+        logging.info(f"Distances shape: {distances.shape}, type: {type(distances)}")
         logging.info(indices)
         most_similar_entries = []
         for i in indices[0]:
@@ -177,10 +176,9 @@ class FAISSEmbedding:
                 "title": self.titles[i] if self.titles else "",
                 "question": self.questions[i],
                 "answer": self.answers[i],
-                # "distance": distances[0][i]
             }
             most_similar_entries.append(entry)
 
         logging.info(f"Search completed for query: '{query}'")
         logging.info(f"Results: {most_similar_entries}")
-        # print(f"Distances: {distances}")
+
